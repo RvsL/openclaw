@@ -127,6 +127,7 @@ function limitMcpResponseStream<Chunk extends Uint8Array>(
         }
         controller.enqueue(chunk);
       } catch (err) {
+        void reader.cancel(err).catch(() => undefined);
         controller.error(err);
       }
     },

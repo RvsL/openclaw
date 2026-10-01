@@ -730,25 +730,34 @@ describe("OpenClaw MCP HTTP lifecycle adapters", () => {
   });
 
   it("preserves response size limits on non-ok HTTP error responses", async () => {
+    let sourceCancelled = false;
     const fetchMock = initializedFetch({
       onGet: () => new Response(null, { status: 405 }),
-      onPost: () =>
-        new Response(
-          new ReadableStream({
-            start(controller) {
-              controller.enqueue(new TextEncoder().encode(OVERSIZED_MCP_TEXT));
-              controller.close();
-            },
-          }),
-          { status: 500, headers: { "content-type": "application/json" } },
-        ),
+      onPost: (message) => {
+        if (message.method === "ping") {
+          return new Response(
+            new ReadableStream({
+              start(controller) {
+                controller.enqueue(new TextEncoder().encode(OVERSIZED_MCP_TEXT));
+                controller.close();
+              },
+              cancel() {
+                sourceCancelled = true;
+              },
+            }),
+            { status: 500, headers: { "content-type": "application/json" } },
+          );
+        }
+        return new Response(null, { status: 202 });
+      },
     });
     const transport = new OpenClawStreamableHTTPClientTransport(new URL("http://mcp.invalid/mcp"), {
       fetch: fetchMock,
     });
     const client = new Client({ name: "test", version: "1" });
     await client.connect(transport);
-    await expect(client.ping()).rejects.toThrow(/exceeds 10485760 bytes/);
+    await expect(client.ping()).rejects.toThrow(/Streamable HTTP error/);
+    expect(sourceCancelled).toBe(true);
     await client.close();
   });
 });
