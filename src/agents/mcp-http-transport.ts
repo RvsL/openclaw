@@ -119,7 +119,7 @@ function limitMcpResponseStream<Chunk extends Uint8Array>(
 }
 
 function limitMcpHttpResponse(response: Response): Response {
-  if (!response.body) {
+  if (!response.body || !response.ok) {
     return response;
   }
   return new Response(limitMcpResponseStream(response.body, isEventStreamResponse(response)), {
