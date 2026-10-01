@@ -697,4 +697,58 @@ describe("OpenClaw MCP HTTP lifecycle adapters", () => {
     });
     expect(getCount).toBe(1);
   });
+
+  it("safely cancels error response bodies on Node 26 without unhandled stream rejection", async () => {
+    let unhandledRejections = 0;
+    const onUnhandled = () => {
+      unhandledRejections += 1;
+    };
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      const fetchMock = initializedFetch({
+        onGet: () =>
+          new Response(
+            new ReadableStream({
+              start(controller) {
+                controller.enqueue(new TextEncoder().encode(JSON.stringify({ error: "Method not allowed" })));
+              },
+            }),
+            { status: 405, headers: { "content-type": "application/json" } },
+          ),
+      });
+      const transport = new OpenClawStreamableHTTPClientTransport(new URL("http://mcp.invalid/mcp"), {
+        fetch: fetchMock,
+      });
+      const client = new Client({ name: "test", version: "1" });
+      await expect(client.connect(transport)).resolves.toBeUndefined();
+      await client.close();
+      await new Promise<void>((resolve) => setTimeout(resolve, 100));
+      expect(unhandledRejections).toBe(0);
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
+  });
+
+  it("preserves response size limits on non-ok HTTP error responses", async () => {
+    const fetchMock = initializedFetch({
+      onGet: () => new Response(null, { status: 405 }),
+      onPost: () =>
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode(OVERSIZED_MCP_TEXT));
+              controller.close();
+            },
+          }),
+          { status: 500, headers: { "content-type": "application/json" } },
+        ),
+    });
+    const transport = new OpenClawStreamableHTTPClientTransport(new URL("http://mcp.invalid/mcp"), {
+      fetch: fetchMock,
+    });
+    const client = new Client({ name: "test", version: "1" });
+    await client.connect(transport);
+    await expect(client.ping()).rejects.toThrow(/exceeds 10485760 bytes/);
+    await client.close();
+  });
 });

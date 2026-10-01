@@ -63,9 +63,22 @@ function limitMcpResponseStream<Chunk extends Uint8Array>(
     checkEventLimit();
   };
 
-  return body.pipeThrough(
-    new TransformStream<Chunk, Chunk>({
-      transform(chunk, controller) {
+  const reader = body.getReader();
+  return new ReadableStream<Chunk>({
+    async pull(controller) {
+      let readResult;
+      try {
+        readResult = await reader.read();
+      } catch (err) {
+        controller.error(err);
+        return;
+      }
+      const { done, value: chunk } = readResult;
+      if (done) {
+        controller.close();
+        return;
+      }
+      try {
         if (!eventStream) {
           messageBytes += chunk.byteLength;
           if (messageBytes > STDIO_DEFAULT_MAX_BUFFER_SIZE) {
@@ -113,13 +126,18 @@ function limitMcpResponseStream<Chunk extends Uint8Array>(
           }
         }
         controller.enqueue(chunk);
-      },
-    }),
-  );
+      } catch (err) {
+        controller.error(err);
+      }
+    },
+    async cancel(reason) {
+      await reader.cancel(reason).catch(() => undefined);
+    },
+  });
 }
 
 function limitMcpHttpResponse(response: Response): Response {
-  if (!response.body || !response.ok) {
+  if (!response.body) {
     return response;
   }
   return new Response(limitMcpResponseStream(response.body, isEventStreamResponse(response)), {
