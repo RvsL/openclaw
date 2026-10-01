@@ -704,13 +704,22 @@ describe("OpenClaw MCP HTTP lifecycle adapters", () => {
       unhandledRejections += 1;
     };
     process.on("unhandledRejection", onUnhandled);
+    let cancelSettled: () => void;
+    const cancelPromise = new Promise<void>((resolve) => {
+      cancelSettled = resolve;
+    });
     try {
       const fetchMock = initializedFetch({
         onGet: () =>
           new Response(
             new ReadableStream({
               start(controller) {
-                controller.enqueue(new TextEncoder().encode(JSON.stringify({ error: "Method not allowed" })));
+                controller.enqueue(
+                  new TextEncoder().encode(JSON.stringify({ error: "Method not allowed" })),
+                );
+              },
+              cancel() {
+                cancelSettled();
               },
             }),
             { status: 405, headers: { "content-type": "application/json" } },
@@ -722,7 +731,7 @@ describe("OpenClaw MCP HTTP lifecycle adapters", () => {
       const client = new Client({ name: "test", version: "1" });
       await expect(client.connect(transport)).resolves.toBeUndefined();
       await client.close();
-      await new Promise<void>((resolve) => setTimeout(resolve, 100));
+      await cancelPromise;
       expect(unhandledRejections).toBe(0);
     } finally {
       process.off("unhandledRejection", onUnhandled);
@@ -730,19 +739,21 @@ describe("OpenClaw MCP HTTP lifecycle adapters", () => {
   });
 
   it("preserves response size limits on non-ok HTTP error responses", async () => {
-    let sourceCancelled = false;
+    let sourceCancelled: () => void;
+    const cancelPromise = new Promise<void>((resolve) => {
+      sourceCancelled = resolve;
+    });
     const fetchMock = initializedFetch({
       onGet: () => new Response(null, { status: 405 }),
       onPost: (message) => {
         if (message.method === "ping") {
           return new Response(
             new ReadableStream({
-              start(controller) {
+              pull(controller) {
                 controller.enqueue(new TextEncoder().encode(OVERSIZED_MCP_TEXT));
-                controller.close();
               },
               cancel() {
-                sourceCancelled = true;
+                sourceCancelled();
               },
             }),
             { status: 500, headers: { "content-type": "application/json" } },
@@ -757,7 +768,7 @@ describe("OpenClaw MCP HTTP lifecycle adapters", () => {
     const client = new Client({ name: "test", version: "1" });
     await client.connect(transport);
     await expect(client.ping()).rejects.toThrow(/Streamable HTTP error/);
-    expect(sourceCancelled).toBe(true);
+    await expect(settlesWithin(cancelPromise, 1_000)).resolves.toBe(true);
     await client.close();
   });
 });
