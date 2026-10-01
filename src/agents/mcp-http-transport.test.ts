@@ -725,9 +725,12 @@ describe("OpenClaw MCP HTTP lifecycle adapters", () => {
             { status: 405, headers: { "content-type": "application/json" } },
           ),
       });
-      const transport = new OpenClawStreamableHTTPClientTransport(new URL("http://mcp.invalid/mcp"), {
-        fetch: fetchMock,
-      });
+      const transport = new OpenClawStreamableHTTPClientTransport(
+        new URL("http://mcp.invalid/mcp"),
+        {
+          fetch: fetchMock,
+        },
+      );
       const client = new Client({ name: "test", version: "1" });
       await expect(client.connect(transport)).resolves.toBeUndefined();
       await client.close();
