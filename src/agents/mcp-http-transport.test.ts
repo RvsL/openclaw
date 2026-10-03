@@ -2,6 +2,7 @@ import { createServer } from "node:http";
 import type { Socket } from "node:net";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { describe, expect, it, vi } from "vitest";
+import { createDeferredCore } from "../shared/deferred.js";
 import { settlesWithin } from "../shared/settle-within.js";
 import { disposeMcpClient } from "./mcp-client-lifecycle.js";
 import { redactMcpDiagnosticError } from "./mcp-error.js";
@@ -699,7 +700,7 @@ describe("OpenClaw MCP HTTP lifecycle adapters", () => {
   });
 
   it("keeps the client usable after cancelling an unread HTTP error body", async () => {
-    const cancelled = Promise.withResolvers<void>();
+    const cancelled = createDeferredCore();
     const server = createServer((_request, response) => {
       response.once("close", () => cancelled.resolve());
       response.writeHead(405, { "content-type": "application/json" });
