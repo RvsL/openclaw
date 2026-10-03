@@ -705,7 +705,9 @@ describe("OpenClaw MCP HTTP lifecycle adapters", () => {
       response.writeHead(405, { "content-type": "application/json" });
       response.write(JSON.stringify({ error: "Method not allowed" }));
     });
-    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    await new Promise<void>((resolve) => {
+      server.listen(0, "127.0.0.1", resolve);
+    });
     const client = new Client({ name: "test", version: "1" });
     try {
       const address = server.address();
