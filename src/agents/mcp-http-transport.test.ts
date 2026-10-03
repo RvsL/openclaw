@@ -698,46 +698,40 @@ describe("OpenClaw MCP HTTP lifecycle adapters", () => {
     expect(getCount).toBe(1);
   });
 
-  it("safely cancels error response bodies on Node 26 without unhandled stream rejection", async () => {
-    let unhandledRejections = 0;
-    const onUnhandled = () => {
-      unhandledRejections += 1;
-    };
-    process.on("unhandledRejection", onUnhandled);
-    let cancelSettled: () => void;
-    const cancelPromise = new Promise<void>((resolve) => {
-      cancelSettled = resolve;
+  it("keeps the client usable after cancelling an unread HTTP error body", async () => {
+    const cancelled = Promise.withResolvers<void>();
+    const server = createServer((_request, response) => {
+      response.once("close", () => cancelled.resolve());
+      response.writeHead(405, { "content-type": "application/json" });
+      response.write(JSON.stringify({ error: "Method not allowed" }));
     });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const client = new Client({ name: "test", version: "1" });
     try {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        throw new Error("expected TCP server address");
+      }
       const fetchMock = initializedFetch({
-        onGet: () =>
-          new Response(
-            new ReadableStream({
-              start(controller) {
-                controller.enqueue(
-                  new TextEncoder().encode(JSON.stringify({ error: "Method not allowed" })),
-                );
-              },
-              cancel() {
-                cancelSettled();
-              },
-            }),
-            { status: 405, headers: { "content-type": "application/json" } },
-          ),
+        onGet: () => fetch(`http://127.0.0.1:${address.port}/mcp`),
+        onPost: (message) =>
+          message.method === "ping"
+            ? jsonResponse({ jsonrpc: "2.0", id: message.id, result: {} })
+            : new Response(null, { status: 202 }),
       });
       const transport = new OpenClawStreamableHTTPClientTransport(
         new URL("http://mcp.invalid/mcp"),
-        {
-          fetch: fetchMock,
-        },
+        { fetch: fetchMock },
       );
-      const client = new Client({ name: "test", version: "1" });
-      await expect(client.connect(transport)).resolves.toBeUndefined();
-      await client.close();
-      await cancelPromise;
-      expect(unhandledRejections).toBe(0);
+      await client.connect(transport);
+      await cancelled.promise;
+      await expect(client.ping()).resolves.toEqual({});
     } finally {
-      process.off("unhandledRejection", onUnhandled);
+      await client.close();
+      await new Promise<void>((resolve) => {
+        server.close(() => resolve());
+        server.closeAllConnections();
+      });
     }
   });
 
